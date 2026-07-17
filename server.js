@@ -15,6 +15,7 @@ const controlRoutes = require('./src/routes/control');
 const metricsRoutes = require('./src/routes/metrics');
 const streamRoutes = require('./src/routes/stream');
 const publicRoutes = require('./src/routes/public');
+const v1Routes = require('./src/routes/v1');
 
 const app = express();
 
@@ -57,6 +58,9 @@ app.get('/', (req, res) => {
       'POST /api/run',
       'POST /api/pause',
       'POST /api/resume',
+      'GET  /v1/stats',
+      'GET  /v1/stocks',
+      'GET  /v1/distributions',
     ],
   });
 });
@@ -66,6 +70,10 @@ app.use('/api', cycleRoutes);
 app.use('/api', controlRoutes);
 app.use('/api', metricsRoutes);
 app.use('/api', streamRoutes);
+
+// Versioned public API consumed by the Robinhood Index Fund site (live prices,
+// market data, distribution receipts — the exact shapes the frontend renders).
+app.use('/v1', v1Routes);
 
 // Public, frontend-shaped endpoints (GET /activity, GET /stats) for the site.
 app.use('/', publicRoutes);

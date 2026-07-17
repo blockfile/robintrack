@@ -118,6 +118,9 @@ const config = {
   universalRouter: process.env.UNIVERSAL_ROUTER || '0xC6da9C87caE2fcecad79E22C398dE16BFAb0cFdA',
   v4Quoter: process.env.V4_QUOTER || '0x628c00B016415Ef530552063faE4154B0CdEb0Ac',
   poolManager: process.env.POOL_MANAGER || '0x8366a39CC670B4001A1121B8F6A443A643e40951',
+  // StateView reads V4 pool state (slot0 → sqrtPrice) for the live stock prices
+  // shown on the site. Same PoolManager as above.
+  v4StateView: process.env.V4_STATE_VIEW || '0xF3334192D15450CdD385c8B70e03f9A6bD9E673b',
 
   // Which stock tokens to buy + airdrop (symbols, comma-separated). Blank = the
   // whole verified registry (see src/evm/stocks.js).

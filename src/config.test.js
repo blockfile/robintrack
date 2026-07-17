@@ -22,8 +22,7 @@ test('config exposes pons.family + reward-engine defaults', () => {
   assert.deepStrictEqual(config.stocks, []);
   assert.strictEqual(config.tokenSymbol, 'PONZI');
   assert.strictEqual(config.rewardBuyPct, 80);
-  assert.strictEqual(config.burnPct, 10);
-  assert.strictEqual(config.devPct, 10); // remainder
+  assert.strictEqual(config.devPct, 20); // remainder — nothing is burned
   assert.strictEqual(config.minHold, 100000);
   assert.strictEqual(config.rewardCapPct, 0);
   // The CODE default — not whatever a local .env happens to set.
@@ -50,23 +49,18 @@ test('no noxa / removed keys remain', () => {
 
 test('devPct is the split remainder and the split is overridable', () => {
   process.env.REWARD_BUY_PCT = '70';
-  process.env.BURN_PCT = '20';
   const config = freshConfig();
   assert.strictEqual(config.rewardBuyPct, 70);
-  assert.strictEqual(config.burnPct, 20);
-  assert.strictEqual(config.devPct, 10);
+  assert.strictEqual(config.devPct, 30, 'dev cut = 100 - reward');
   delete process.env.REWARD_BUY_PCT;
-  delete process.env.BURN_PCT;
   delete require.cache[require.resolve('./config')];
 });
 
-test('rejects a split that exceeds 100%', () => {
-  process.env.REWARD_BUY_PCT = '80';
-  process.env.BURN_PCT = '30';
+test('rejects a split outside 0–100%', () => {
+  process.env.REWARD_BUY_PCT = '130';
   delete require.cache[require.resolve('./config')];
   assert.throws(() => require('./config'), /split/i);
   delete process.env.REWARD_BUY_PCT;
-  delete process.env.BURN_PCT;
   delete require.cache[require.resolve('./config')];
 });
 

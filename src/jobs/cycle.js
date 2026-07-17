@@ -4,9 +4,7 @@ const config = require('../config');
 const repo = require('../db/repository');
 const { parseEther, formatUnits } = require('ethers');
 const { claimCreatorFees } = require('../evm/pons');
-const { buyToken } = require('../evm/uniswap');
-const { burnToken } = require('../evm/burn');
-const { getWethBalanceEth, unwrapAllWeth, getTokenSupplyRaw, readTokenBalance } = require('../evm/erc20');
+const { getWethBalanceEth, unwrapAllWeth, getTokenSupplyRaw } = require('../evm/erc20');
 const { snapshotEligibleHolders } = require('../evm/holders');
 const { buildExcludeSet } = require('../evm/exclude');
 const { computeWeightedAllocations } = require('../services/distribution');
@@ -87,13 +85,14 @@ async function runRewardLeg(cycleId, { holderToken, ethAmount, minHold, capPct, 
 }
 
 /**
- * One reward-and-burn cycle (fired by the scheduler; skipped upstream when
- * nothing is claimable):
+ * One reward cycle (fired by the scheduler; skipped upstream when nothing is
+ * claimable):
  *
  *   claim PONZI creator fees from the pons.family locker (paid in WETH)
- *     → REWARD_BUY_PCT: buy PONS and airdrop it to PONZI holders (pro-rata)
- *     → BURN_PCT:       buy PONZI and burn it (+ any PONZI token-side fees)
- *     → remainder:      unwrap the leftover WETH to native ETH (dev cut + gas)
+ *     → unwrap to native ETH (the V4 stock pools price against native ETH)
+ *     → REWARD_BUY_PCT: buy the stocks on Uniswap V4 and airdrop each to PONZI
+ *                       holders (pro-rata)
+ *     → remainder:      kept as native ETH (dev cut + gas)
  *
  * Each step is recorded; a thrown step fails the cycle without crashing.
  * @returns {Promise<object>} the persisted cycle (with steps)
@@ -121,17 +120,14 @@ async function runCycle() {
     }
 
     // The claim lands as WETH, but the V4 stock pools price against NATIVE ETH —
-    // so unwrap up front and let the reward leg spend ETH directly. The V3 burn
-    // leg re-wraps only what it needs.
+    // so unwrap the whole claim up front and spend ETH directly.
     if (!config.dryRun) {
       await unwrapAllWeth().catch((err) => log(`unwrap before stock buys failed (non-fatal): ${err.message}`));
     }
 
-    const eth = (pct) => +(walletWeth * (pct / 100)).toFixed(9);
-    const rewardEth = eth(config.rewardBuyPct);
-    const burnEth = eth(config.burnPct);
-    const devEth = +(walletWeth - rewardEth - burnEth).toFixed(9);
-    log(`split: ${rewardEth} → stocks (${config.rewardBuyPct}%), ${burnEth} → ${config.tokenSymbol} burn (${config.burnPct}%), keep ${devEth} for dev/gas`);
+    const rewardEth = +(walletWeth * (config.rewardBuyPct / 100)).toFixed(9);
+    const devEth = +(walletWeth - rewardEth).toFixed(9);
+    log(`split: ${rewardEth} → stocks (${config.rewardBuyPct}%), keep ${devEth} for dev/gas (${config.devPct}%)`);
 
     // 2. Reward leg — buy stocks on V4 + airdrop each to PONZI holders.
     let reward = { sent: 0, failed: 0, eligibleHolders: 0, totalHolders: 0, stocks: [] };
@@ -145,42 +141,22 @@ async function runCycle() {
       });
     }
 
-    // 3. Burn leg — buy PONZI with burnEth and burn it. By default burn ONLY the
-    //    buyback; set BURN_TOKEN_SIDE_FEES=true to also burn the PONZI token-side
-    //    creator fees that accrue to the wallet each claim.
-    let burned = 0;
-    let burnSig = null;
-    if (burnEth > 0) {
-      const buyBurn = await buyToken(config.tokenAddress, burnEth);
-      await repo.addStep({ cycleId: id, name: 'buy', status: 'ok', signature: buyBurn.signature, detail: { leg: 'burn', token: config.tokenAddress, ethSpent: burnEth, tokensBought: buyBurn.tokensBought } });
-      const toBurnRaw = config.dryRun || !config.burnTokenSideFees
-        ? buyBurn.tokensBoughtRaw
-        : (await readTokenBalance(config.tokenAddress, config.wallet.address)).toString();
-      const burn = await burnToken(config.tokenAddress, toBurnRaw);
-      await repo.addStep({ cycleId: id, name: 'burn', status: 'ok', signature: burn.signature, detail: { tokensBurned: burn.burned, burnedRaw: burn.burnedRaw, deadAddress: burn.deadAddress } });
-      burned = burn.burned;
-      burnSig = burn.signature;
-      log(`burned ${burn.burned} ${config.tokenSymbol} → ${burn.deadAddress}`);
-    }
-
-    // 4. Dev cut — unwrap the WETH remainder to native ETH (kept for gas + dev).
-    //    Best-effort — never fails the cycle.
+    // 3. Dev cut — sweep any WETH left over (e.g. a claim that arrived after the
+    //    unwrap) to native ETH. Best-effort — never fails the cycle.
     await unwrapAllWeth().catch((err) => log(`unwrap remainder failed (non-fatal): ${err.message}`));
 
     // 5. Done.
     await repo.finishCycle(id, {
       status: 'complete',
-      mode: 'stocks-reward-burn',
+      mode: 'stocks-reward',
       eth_claimed: claimed,
       eth_spent_buy: rewardEth,
-      tokens_burned: burned,
-      burn_sig: burnSig,
       eligible_holders: reward.eligibleHolders,
       total_holders: reward.totalHolders,
       stocks: reward.stocks,
       note: `airdropped ${reward.stocks.filter((s) => !s.error).length} stocks, ${reward.sent} sends (${reward.failed} failed)`,
     });
-    log('complete (stocks-reward-burn)');
+    log('complete (stocks-reward)');
     return repo.getCycleWithSteps(id);
   } catch (err) {
     const message = err && err.message ? err.message : String(err);

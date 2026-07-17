@@ -44,20 +44,22 @@ test('toPublicActivityRow maps buy + burn steps', () => {
   assert.strictEqual(burn.tokens, 500);
 });
 
-test('toPublicStats emits the flat frontend stats object', () => {
+test('toPublicStats emits the flat frontend stats object (no burn fields)', () => {
   const out = toPublicStats({
-    stats: { total_eth_claimed: 12, total_eth_spent_buy: 9.6, total_tokens_bought: 1000, total_tokens_burned: 1000, burns: 6 },
+    stats: { total_eth_claimed: 12, total_eth_spent_buy: 9.6, total_tokens_bought: 1000 },
     unclaimedEth: 0.5,
     operatingWallet: '0xwallet',
     market: { marketCap: 100 },
   });
   assert.strictEqual(out.totalCreatorFeesClaimed, 12);
   assert.strictEqual(out.ethSpentBuying, 9.6);
-  assert.strictEqual(out.tokensBurned, 1000);
-  assert.strictEqual(out.burns, 6);
+  assert.strictEqual(out.tokensBought, 1000);
   assert.strictEqual(out.operatingWallet, '0xwallet');
   assert.strictEqual(out.unclaimedFeesEth, 0.5);
   assert.strictEqual(out.marketCap, 100);
+  // The bot no longer burns — don't hand the frontend a phantom "burns: 0".
+  assert.ok(!('tokensBurned' in out), 'no tokensBurned field');
+  assert.ok(!('burns' in out), 'no burns field');
 });
 
 test('toPublicSummary reports claimed fees and burned totals', () => {

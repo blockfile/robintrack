@@ -65,17 +65,14 @@ const { wallet, ephemeral: walletIsEphemeral } = loadWallet();
 
 const lowerOrNull = (v) => (v ? String(v).trim().toLowerCase() : null);
 
-// ── Buyback / reward split (of each WETH claim) ──────────────────────────────
-// REWARD_BUY_PCT → buy PONS and airdrop it to PONZI holders; BURN_PCT → buy PONZI
-// and burn it; the remainder (dev cut) stays in the wallet as native ETH for gas.
+// ── Reward split (of each WETH claim) ────────────────────────────────────────
+// REWARD_BUY_PCT → buy the stocks and airdrop them to PONZI holders; the
+// remainder (dev cut) stays in the wallet as native ETH for gas.
 const rewardBuyPct = num(process.env.REWARD_BUY_PCT, 80);
-const burnPct = num(process.env.BURN_PCT, 10);
-if (rewardBuyPct < 0 || burnPct < 0 || rewardBuyPct + burnPct > 100) {
-  throw new Error(
-    `invalid split: REWARD_BUY_PCT(${rewardBuyPct}) + BURN_PCT(${burnPct}) must be within [0, 100]`
-  );
+if (rewardBuyPct < 0 || rewardBuyPct > 100) {
+  throw new Error(`invalid split: REWARD_BUY_PCT(${rewardBuyPct}) must be within [0, 100]`);
 }
-const devPct = +(100 - rewardBuyPct - burnPct).toFixed(6);
+const devPct = +(100 - rewardBuyPct).toFixed(6);
 
 const triggerMode = ['interval', 'accumulation'].includes(
   String(process.env.TRIGGER_MODE || 'interval').toLowerCase()
@@ -133,17 +130,13 @@ const config = {
 
   // ── Split ────────────────────────────────────────────────────────────────
   rewardBuyPct, // % of each claim → buy STOCKS (airdropped to holders)
-  burnPct, // % of each claim → buy PONZI and burn
   devPct, // remainder kept as native ETH (dev cut + gas)
-  // false (default) → burn ONLY the BURN_PCT buyback. true → also burn the PONZI
-  // token-side creator fees that accrue to the wallet on every claim (which is
-  // what made a single cycle's burn far larger than the 2% buyback).
-  burnTokenSideFees: bool(process.env.BURN_TOKEN_SIDE_FEES, false),
-  slippagePct: num(process.env.SLIPPAGE_PCT, 5), // Uniswap V3 buy-swap slippage, percent
-  gasReserveEth: num(process.env.GAS_RESERVE_ETH, 0.005), // native ETH never wrapped/spent on a buy
+  slippagePct: num(process.env.SLIPPAGE_PCT, 5), // V4 stock-buy slippage, percent
+  gasReserveEth: num(process.env.GAS_RESERVE_ETH, 0.005), // native ETH never spent on a buy
+  // Kept only so the dead address is excluded from airdrops — nothing is burned.
   deadAddress: lowerOrNull(process.env.DEAD_ADDRESS) || '0x000000000000000000000000000000000000dead',
 
-  // ── Airdrop (PONS → PONZI holders) ──────────────────────────────────────────
+  // ── Airdrop (stocks → PONZI holders) ────────────────────────────────────────
   minHold: num(process.env.MIN_HOLD, 100000), // min PONZI balance to qualify
   rewardCapPct: num(process.env.REWARD_CAP_PCT, 0), // per-wallet weight cap, % of supply (0 = pure pro-rata)
   clusters: parseClusters(process.env.CLUSTERS), // wallet groups treated as one person for the cap

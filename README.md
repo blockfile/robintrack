@@ -3,16 +3,17 @@
 **Turns your pons.family token's creator fees into real tokenized-stock airdrops
 for your holders — on Robinhood Chain.**
 
-Every claim, the bot recycles your PONZI creator fees into three streams:
+Every claim, the bot recycles your PONZI creator fees into stock airdrops:
 
 ```
 claim PONZI creator fees (WETH)  — collectFees() on the pons.family locker
   → unwrap to native ETH
-  → 80%  buy STOCKS (Uniswap V4: NVDA, AAPL, TSLA, …)
-         → airdrop each stock to PONZI holders (pro-rata, >= MIN_HOLD)
-  →  5%  buy PONZI (Uniswap V3) → BURN it (0x…dEaD)
-  → 15%  kept as native ETH (dev cut + gas)
+  → 80%  buy the 10 assets (Uniswap V4: NVDA, AAPL, TSLA, …)
+         → airdrop ALL 10 to each PONZI holder (pro-rata, >= MIN_HOLD)
+  → 20%  kept as native ETH (dev cut + gas)
 ```
+
+Every eligible holder receives **all 10 assets** every cycle. Nothing is burned.
 
 Everything runs in `DRY_RUN=true` by default — all on-chain calls are simulated
 and no funds are touched until you flip it off.
@@ -82,7 +83,6 @@ npm start
 | `TOKEN_ADDRESS` | — | your PONZI token on pons.family (its fees fund everything) |
 | `STOCKS` | *(blank)* | stocks to buy + airdrop; blank = the whole verified registry |
 | `REWARD_BUY_PCT` | `80` | % of each claim → stocks (airdropped) |
-| `BURN_PCT` | `5` | % of each claim → buy PONZI + burn |
 | `MIN_HOLD` | `100000` | min PONZI balance to qualify for a drop |
 | `REWARD_CAP_PCT` | `0` | optional per-wallet cap (anti-whale); 0 = off |
 | `SLIPPAGE_PCT` | `5` | buy-swap slippage tolerance |
@@ -97,7 +97,7 @@ npm start
 
 ## Verified, not assumed
 
-- **55/55 tests pass** (dry-run cycle: claim → buy 10 stocks → 10 airdrops → burn).
+- **56/56 tests pass** (dry-run cycle: claim → buy 10 stocks → 10 airdrops → dev).
 - The **V4 UniversalRouter encoding was validated against the live chain** by
   `staticCall`ing `execute()` for NVDA/AAPL/TSLA — it succeeds, so the swap path
   is real rather than theoretical (see `simulateBuy` in `src/evm/v4.js`).

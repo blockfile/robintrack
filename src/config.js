@@ -123,6 +123,14 @@ const config = {
   // whole verified registry (see src/evm/stocks.js).
   stocks: list(process.env.STOCKS),
 
+  // Price-sanity bounds for a stock buy. Several V4 pools on this chain are
+  // initialised but EMPTY and quote absurd prices (TSM implies ~$179,000,000 a
+  // share against a real ~$408). The slippage floor cannot catch that, because
+  // amountOutMinimum is derived from the same poisoned quote — so any implied
+  // unit price outside this range means "broken pool", and the stock is skipped.
+  maxImpliedPriceUsd: num(process.env.MAX_IMPLIED_PRICE_USD, 10000),
+  minImpliedPriceUsd: num(process.env.MIN_IMPLIED_PRICE_USD, 0.01),
+
   // ── Split ────────────────────────────────────────────────────────────────
   rewardBuyPct, // % of each claim → buy STOCKS (airdropped to holders)
   burnPct, // % of each claim → buy PONZI and burn

@@ -1,32 +1,53 @@
 'use strict';
 
-// The Robinhood stock tokens this bot buys and airdrops.
+// The Robinhood tokenized assets this bot buys and airdrops — the TOP 10 by real
+// Uniswap V4 liquidity.
 //
-// Every entry below was verified on-chain: each has a LIVE Uniswap V4 pool
-// against NATIVE ETH (fee 50000 / tickSpacing 1000 / no hooks) and returned a
-// real quote. The other Robinhood stock tokens (BE, COIN, CRWV, INTC, MU, ORCL,
-// SNDK, USAR) exist but have NO direct ETH pool — they'd need a USDG hop, so
-// they're deliberately left out rather than failing every cycle.
+// Every entry was verified on-chain twice over: it has a live V4 pool against
+// NATIVE ETH with non-zero liquidity (read from StateView), AND its quote prices
+// sanely against the real market (e.g. NVDA quoted $211 vs a real ~$207).
 //
-// Pin addresses, never symbols: the chain has copycat tokens squatting real
+// This list is deliberately short. Of ~38 Robinhood tokens with an initialised
+// ETH pool, only ELEVEN price sanely — and the split is perfectly clean:
+//   * every healthy pool is fee 50000 / tickSpacing 1000
+//   * every fee 10000 / tickSpacing 200 pool is an empty placeholder that quotes
+//     absurd prices (TSM implies ~$179,000,000/share against a real ~$408; AVGO
+//     ~$136,000,000 vs ~$374). Buying through one would burn the ETH for dust.
+// So NFLX, COIN, ORCL, INTC, MU, GME, QQQ, SLV, TSM, AVGO, AMAT, RKLB, … are
+// excluded on purpose. META is the 11th and just misses the cut.
+//
+// Gold/silver are NOT obtainable here: XAU/XAG/XAUT/PAXG have no usable ETH pool
+// (the on-chain "GOLD"/"XAUT" tokens are unrelated memecoins — one is literally
+// "Trump Gold"), and USDC likewise ("United States Dump Coin").
+//
+// Pin addresses, never symbols: the chain is full of copycats squatting real
 // tickers (there is a fake "SPCX" literally named ScammingPeopleCashXtraction).
 
 const { ZeroAddress } = require('ethers');
 
-const V4_FEE = 50000; // 5% — the tier every stock/ETH pool uses
+const V4_FEE = 50000; // 5% — the ONLY tier with real stock liquidity
 const V4_TICK_SPACING = 1000;
 
+// Ordered by measured V4 liquidity, deepest first.
+//
+// This is the requested basket (NVDA, AAPL, GOOGL, MSFT, AMZN, SPCX, META, TSLA)
+// plus two fills, because the requested XAU (gold) and XAG (silver) are simply
+// not obtainable on this chain — no Robinhood metal token has a usable ETH pool,
+// and the SLV ETF's pool is one of the broken ones ($11.3M/unit implied).
+// The fills are the two most liquid remaining sane assets: AMD, and SPY — an
+// S&P 500 ETF, the closest available stand-in for the broad-market exposure the
+// metals were there to provide. Swap SPY → PLTR if you'd rather stay all-stocks.
 const REGISTRY = [
-  { symbol: 'AAPL', name: 'Apple', token: '0xaF3D76f1834A1d425780943C99Ea8A608f8a93f9' },
-  { symbol: 'AMD', name: 'AMD', token: '0x86923f96303D656E4aa86D9d42D1e57ad2023fdC' },
-  { symbol: 'AMZN', name: 'Amazon', token: '0x12f190a9F9d7D37a250758b26824B97CE941bF54' },
-  { symbol: 'GOOGL', name: 'Alphabet', token: '0x2e0847E8910a9732eB3fb1bb4b70a580ADAD4FE3' },
-  { symbol: 'META', name: 'Meta', token: '0xc0D6457C16Cc70d6790Dd43521C899C87ce02f35' },
-  { symbol: 'MSFT', name: 'Microsoft', token: '0xe93237C50D904957Cf27E7B1133b510C669c2e74' },
   { symbol: 'NVDA', name: 'NVIDIA', token: '0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC' },
-  { symbol: 'PLTR', name: 'Palantir', token: '0x894E1EC2D74FFE5AEF8Dc8A9e84686acCB964F2A' },
   { symbol: 'SPCX', name: 'SpaceX', token: '0x4a0E65A3EcceC6dBe60AE065F2e7bb85Fae35eEa' },
   { symbol: 'TSLA', name: 'Tesla', token: '0x322F0929c4625eD5bAd873c95208D54E1c003b2d' },
+  { symbol: 'AAPL', name: 'Apple', token: '0xaF3D76f1834A1d425780943C99Ea8A608f8a93f9' },
+  { symbol: 'AMD', name: 'AMD', token: '0x86923f96303D656E4aa86D9d42D1e57ad2023fdC' },
+  { symbol: 'GOOGL', name: 'Alphabet', token: '0x2e0847E8910a9732eB3fb1bb4b70a580ADAD4FE3' },
+  { symbol: 'AMZN', name: 'Amazon', token: '0x12f190a9F9d7D37a250758b26824B97CE941bF54' },
+  { symbol: 'SPY', name: 'SPDR S&P 500 ETF Trust', token: '0x117cc2133c37B721F49dE2A7a74833232B3B4C0C' },
+  { symbol: 'MSFT', name: 'Microsoft', token: '0xe93237C50D904957Cf27E7B1133b510C669c2e74' },
+  { symbol: 'META', name: 'Meta', token: '0xc0D6457C16Cc70d6790Dd43521C899C87ce02f35' },
 ].map((s) => ({
   ...s,
   token: s.token.toLowerCase(),

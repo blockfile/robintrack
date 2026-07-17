@@ -13,10 +13,11 @@
 // Each stock pools directly against NATIVE ETH (currency0 = address(0)), so there
 // is no wrapping and no USDG hop.
 
-const { Contract, AbiCoder, concat, ZeroAddress } = require('ethers');
+const { Contract, AbiCoder, concat, ZeroAddress, formatEther, formatUnits } = require('ethers');
 const config = require('../config');
 const { provider, wallet } = require('./provider');
 const { readTokenBalance } = require('./erc20');
+const { getEthPriceUsd } = require('./price');
 
 const abi = AbiCoder.defaultAbiCoder();
 
@@ -68,6 +69,35 @@ async function quoteEthToStock(stock, amountInWei) {
   } catch (_err) {
     return null; // no pool / no liquidity for this stock against native ETH
   }
+}
+
+/**
+ * Refuse to buy through a pool whose price is nonsense.
+ *
+ * This is not hypothetical: on this chain the TSM and AVGO pools are initialised
+ * but empty, and quote 0.01 ETH → ~0.0000001 units — an implied ~$179,000,000
+ * per share against a real price of ~$408. The slippage floor CANNOT catch that,
+ * because amountOutMinimum is derived from the same poisoned quote. So sanity
+ * check the implied unit price against the live ETH price and skip the stock.
+ *
+ * If the ETH price is unavailable we don't block the cycle — the per-stock
+ * try/catch and the slippage floor still apply.
+ */
+async function assertSanePrice(stock, amountInWei, quotedRaw) {
+  const ethUsd = await getEthPriceUsd().catch(() => null);
+  if (!ethUsd || !(ethUsd > 0)) return null;
+
+  const units = Number(formatUnits(quotedRaw, stock.decimals));
+  if (!(units > 0)) throw new Error(`${stock.symbol}: quote returned 0 units`);
+
+  const impliedUsd = (Number(formatEther(amountInWei)) * ethUsd) / units;
+  if (impliedUsd > config.maxImpliedPriceUsd || impliedUsd < config.minImpliedPriceUsd) {
+    throw new Error(
+      `${stock.symbol} pool looks broken — implied $${impliedUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })}/unit ` +
+        `outside the sane range $${config.minImpliedPriceUsd}–$${config.maxImpliedPriceUsd}; refusing to buy`
+    );
+  }
+  return impliedUsd;
 }
 
 /** Encode the UniversalRouter input for a single exact-in V4 swap. */
@@ -133,6 +163,10 @@ async function buyStockWithEth(stock, amountInWei) {
   if (quoted == null || quoted === 0n) {
     throw new Error(`no V4 ETH pool/liquidity for ${stock.symbol} (${stock.token})`);
   }
+  // Guard against an initialised-but-empty pool quoting absurd prices — the
+  // slippage floor can't, since it's derived from this same quote.
+  await assertSanePrice(stock, amountInWei, quoted);
+
   const amountOutMin = (quoted * BigInt(Math.round((100 - config.slippagePct) * 100))) / 10000n;
 
   const { commands, inputs, deadline, value } = buildBuyCall(stock, amountInWei, amountOutMin);
@@ -153,6 +187,7 @@ async function buyStockWithEth(stock, amountInWei) {
 module.exports = {
   ethPoolKey,
   quoteEthToStock,
+  assertSanePrice,
   encodeSwapInput,
   buildBuyCall,
   simulateBuy,

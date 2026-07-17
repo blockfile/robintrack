@@ -3,15 +3,20 @@ const test = require('node:test');
 const assert = require('node:assert');
 const { REGISTRY, resolveStocks } = require('./stocks');
 
-test('registry only holds stocks with a verified native-ETH V4 pool', () => {
-  assert.ok(REGISTRY.length >= 10, 'has the verified stocks');
+test('registry is exactly the 10 assets with a verified, sanely-priced V4 ETH pool', () => {
+  assert.strictEqual(REGISTRY.length, 10, '10 assets airdropped per wallet');
   const symbols = REGISTRY.map((s) => s.symbol);
-  for (const expected of ['NVDA', 'AAPL', 'TSLA', 'SPCX', 'GOOGL', 'MSFT', 'META', 'AMZN', 'AMD', 'PLTR']) {
+  for (const expected of ['NVDA', 'AAPL', 'TSLA', 'SPCX', 'GOOGL', 'MSFT', 'META', 'AMZN', 'AMD', 'SPY']) {
     assert.ok(symbols.includes(expected), `${expected} is buyable with ETH on V4`);
   }
-  // Stocks with NO direct ETH pool must stay out — they'd fail every cycle.
-  for (const excluded of ['COIN', 'INTC', 'ORCL', 'MU', 'BE', 'CRWV', 'SNDK', 'USAR']) {
-    assert.ok(!symbols.includes(excluded), `${excluded} has no direct ETH pool and must be excluded`);
+  // Assets whose ETH pool is initialised but EMPTY (absurd quotes) must stay out
+  // — buying through one burns the ETH for dust.
+  for (const broken of ['TSM', 'AVGO', 'COIN', 'INTC', 'ORCL', 'MU', 'NFLX', 'QQQ', 'SLV', 'GME']) {
+    assert.ok(!symbols.includes(broken), `${broken} has a broken/empty pool and must be excluded`);
+  }
+  // Gold/silver are not obtainable on this chain at all.
+  for (const metal of ['XAU', 'XAG', 'XAUT', 'PAXG']) {
+    assert.ok(!symbols.includes(metal), `${metal} has no usable pool`);
   }
 });
 

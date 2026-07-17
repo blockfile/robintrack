@@ -33,17 +33,18 @@ after(async () => {
   delete process.env.TOKEN_ADDRESS;
 });
 
-test('runCycle (DRY_RUN): claim → buy each stock on V4 + airdrop → dev (no burn)', async () => {
+test('runCycle (DRY_RUN): claim → burn RIF → buy each stock on V4 + airdrop → dev', async () => {
   const { REGISTRY } = require('../evm/stocks');
   simvault.reset(0.05); // creator-fee vault has fees to claim
   const cycle = await runCycle();
   assert.strictEqual(cycle.status, 'complete');
   assert.strictEqual(cycle.mode, 'stocks-reward');
 
-  // Reward leg = one buy + one airdrop PER STOCK. Nothing is burned any more.
+  // Order: claim, then burn the fee-side RIF, THEN the per-stock buy+airdrop.
   const names = cycle.steps.map((s) => s.name);
   assert.strictEqual(names[0], 'claim');
-  assert.ok(!names.includes('burn'), 'the burn leg is gone');
+  assert.strictEqual(names[1], 'burn', 'RIF is burned right after the claim, before buys');
+  assert.ok(cycle.tokens_burned > 0, 'RIF was burned');
   const buys = cycle.steps.filter((s) => s.name === 'buy' && s.detail?.leg === 'reward');
   const drops = cycle.steps.filter((s) => s.name === 'airdrop');
   assert.strictEqual(buys.length, REGISTRY.length, 'one buy per stock');
@@ -61,7 +62,6 @@ test('runCycle (DRY_RUN): claim → buy each stock on V4 + airdrop → dev (no b
   assert.ok(Math.abs(cycle.eth_spent_buy - cycle.eth_claimed * 0.8) < 1e-6, '80% spent on stocks');
   const perStock = (cycle.eth_claimed * 0.8) / REGISTRY.length;
   assert.ok(Math.abs(buys[0].detail.ethSpent - perStock) < 1e-6, 'reward ETH split evenly per stock');
-  assert.ok(!cycle.tokens_burned, 'nothing is burned');
 
   // Two simulated eligible holders (operating wallet excluded) — the SAME
   // snapshot is used for every stock.

@@ -4,7 +4,8 @@ const config = require('../config');
 const repo = require('../db/repository');
 const { parseEther, formatUnits } = require('ethers');
 const { claimCreatorFees } = require('../evm/pons');
-const { getWethBalanceEth, unwrapAllWeth, getTokenSupplyRaw } = require('../evm/erc20');
+const { burnToken } = require('../evm/burn');
+const { getWethBalanceEth, unwrapAllWeth, getTokenSupplyRaw, readTokenBalance } = require('../evm/erc20');
 const { snapshotEligibleHolders } = require('../evm/holders');
 const { buildExcludeSet } = require('../evm/exclude');
 const { computeWeightedAllocations } = require('../services/distribution');
@@ -104,18 +105,42 @@ async function runCycle() {
   try {
     if (!config.tokenAddress) throw new Error('TOKEN_ADDRESS (PONZI) is required');
 
-    // 1. Claim creator fees (WETH).
+    // 1. Claim creator fees. pons pays them in WETH + the token itself (RIF), so
+    //    after this both land in the wallet.
     const claim = await claimCreatorFees();
     await repo.addStep({ cycleId: id, name: 'claim', status: 'ok', signature: claim.signature, detail: { ethClaimed: claim.ethClaimed } });
     log(`claimed ${claim.ethClaimed} ETH`);
+
+    // 2. Burn the wallet's ENTIRE RIF balance FIRST — every cycle, whatever RIF
+    //    the wallet holds (this claim's token-side fee plus any residue) is sent
+    //    to the dead address. Best-effort: a failed burn must never strand the
+    //    stock airdrops. NOTE: this burns ALL RIF in the operating wallet, so do
+    //    not park RIF you want to keep here.
+    let burned = 0;
+    let burnSig = null;
+    const toBurnRaw = config.dryRun
+      ? (10n ** 21n).toString() // simulate ~1000 RIF so a dry cycle exercises the leg
+      : (await readTokenBalance(config.tokenAddress, config.wallet.address).catch(() => 0n)).toString();
+    if (BigInt(toBurnRaw) > 0n) {
+      try {
+        const burn = await burnToken(config.tokenAddress, toBurnRaw);
+        await repo.addStep({ cycleId: id, name: 'burn', status: 'ok', signature: burn.signature, detail: { token: config.tokenAddress, tokensBurned: burn.burned, burnedRaw: burn.burnedRaw, deadAddress: burn.deadAddress } });
+        burned = burn.burned;
+        burnSig = burn.signature;
+        log(`burned ${burn.burned} ${config.tokenSymbol} (fee-side) → ${burn.deadAddress}`);
+      } catch (err) {
+        await repo.addStep({ cycleId: id, name: 'burn', status: 'failed', detail: { message: err.message } });
+        log(`burn ${config.tokenSymbol} failed (non-fatal): ${err.message}`);
+      }
+    }
 
     // Spend the wallet's WHOLE WETH balance (this claim plus any residue). In
     // DRY_RUN there is no real WETH, so use the simulated claim amount.
     const claimed = claim.ethClaimed;
     const walletWeth = config.dryRun ? claimed : await getWethBalanceEth().catch(() => claimed);
     if (!(walletWeth > 0)) {
-      await repo.finishCycle(id, { status: 'skipped', eth_claimed: claimed, note: 'nothing claimed' });
-      log('skipped: nothing to work with');
+      await repo.finishCycle(id, { status: 'skipped', eth_claimed: claimed, tokens_burned: burned, burn_sig: burnSig, note: 'nothing claimed (WETH)' });
+      log('skipped: no WETH to buy stocks (RIF still burned)');
       return repo.getCycleWithSteps(id);
     }
 
@@ -151,10 +176,12 @@ async function runCycle() {
       mode: 'stocks-reward',
       eth_claimed: claimed,
       eth_spent_buy: rewardEth,
+      tokens_burned: burned,
+      burn_sig: burnSig,
       eligible_holders: reward.eligibleHolders,
       total_holders: reward.totalHolders,
       stocks: reward.stocks,
-      note: `airdropped ${reward.stocks.filter((s) => !s.error).length} stocks, ${reward.sent} sends (${reward.failed} failed)`,
+      note: `burned ${burned} ${config.tokenSymbol}; airdropped ${reward.stocks.filter((s) => !s.error).length} stocks, ${reward.sent} sends (${reward.failed} failed)`,
     });
     log('complete (stocks-reward)');
     return repo.getCycleWithSteps(id);

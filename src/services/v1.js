@@ -55,6 +55,8 @@ async function buildStats() {
     indexPriceUsd: market.priceUsd ?? null, // null until listed
     totalValueDistributedUsd: +totalUsd.toFixed(2),
     feesCollectedEth: +(stats.total_eth_claimed || 0).toFixed(6),
+    rifBurned: stats.total_tokens_burned || 0, // token-side fee RIF burned to date
+    burns: stats.burns || 0,
     wallets: holders,
     holders,
     distributionIntervalSeconds: intervalSec,

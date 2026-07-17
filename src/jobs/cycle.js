@@ -145,7 +145,7 @@ async function runCycle() {
     //    unwrap) to native ETH. Best-effort — never fails the cycle.
     await unwrapAllWeth().catch((err) => log(`unwrap remainder failed (non-fatal): ${err.message}`));
 
-    // 5. Done.
+    // 4. Done.
     await repo.finishCycle(id, {
       status: 'complete',
       mode: 'stocks-reward',

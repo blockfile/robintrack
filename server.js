@@ -37,7 +37,7 @@ app.get('/', (req, res) => {
   res.json({
     name: 'ponsliqui',
     description:
-      'pons.family PONZI creator fees → buy PONS + airdrop to PONZI holders / buy + burn PONZI / dev cut (Robinhood Chain)',
+      'pons.family PONZI creator fees → buy tokenized stocks on Uniswap V4 + airdrop them to PONZI holders / dev cut (Robinhood Chain)',
     dryRun: config.dryRun,
     chainId: config.chainId,
     wallet: walletAddress(),

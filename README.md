@@ -38,7 +38,7 @@ native ETH**, so there is no wrapping and no USDG hop.
 Only stocks with a **live native-ETH V4 pool** are in the registry
 (`src/evm/stocks.js`) — each verified by a real quote:
 
-**AAPL · AMD · AMZN · GOOGL · META · MSFT · NVDA · PLTR · SPCX · TSLA**
+**AAPL · AMD · AMZN · GOOGL · META · MSFT · NVDA · SPCX · SPY · TSLA**
 
 `BE, COIN, CRWV, INTC, MU, ORCL, SNDK, USAR` exist as tokens but have **no direct
 ETH pool**, so they are deliberately excluded rather than failing every cycle.
@@ -72,7 +72,7 @@ the V4 buys.
 ```bash
 npm install
 cp .env.example .env       # safe defaults: DRY_RUN=true, ephemeral wallet
-npm test                   # 55 tests, in-memory MongoDB
+npm test                   # 56 tests, in-memory MongoDB
 npm start
 ```
 

@@ -132,7 +132,6 @@ const config = {
   rewardBuyPct, // % of each claim → buy STOCKS (airdropped to holders)
   devPct, // remainder kept as native ETH (dev cut + gas)
   slippagePct: num(process.env.SLIPPAGE_PCT, 5), // V4 stock-buy slippage, percent
-  gasReserveEth: num(process.env.GAS_RESERVE_ETH, 0.005), // native ETH never spent on a buy
   // Kept only so the dead address is excluded from airdrops — nothing is burned.
   deadAddress: lowerOrNull(process.env.DEAD_ADDRESS) || '0x000000000000000000000000000000000000dead',
 

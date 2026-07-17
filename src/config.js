@@ -98,9 +98,12 @@ const config = {
   weth: process.env.WETH_ADDRESS || '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73',
   swapRouter: process.env.SWAP_ROUTER || '0xCaf681a66D020601342297493863E78C959E5cb2',
   // Protocol's share of each collectFees() payout (both fee sides); the creator
-  // (this wallet) gets the remainder. Used only to estimate the claimable balance
-  // for the trigger — the actual payout is measured from the receipt's logs.
-  protocolFeeSharePct: num(process.env.PROTOCOL_FEE_SHARE_PCT, 10),
+  // (this wallet) gets the remainder. pons.family splits trading fees 70% creator
+  // / 30% protocol, so this defaults to 30. Used only to ESTIMATE the claimable
+  // balance for the trigger — the live path reads the real share on-chain
+  // (tokenProtocolFeeShares) and falls back to this, and the actual payout is
+  // measured exactly from the receipt's WETH Transfer logs regardless.
+  protocolFeeSharePct: num(process.env.PROTOCOL_FEE_SHARE_PCT, 30),
 
   // The PONZI token you launched on pons.family. Its creator fees fund the cycle.
   tokenAddress: lowerOrNull(process.env.TOKEN_ADDRESS),

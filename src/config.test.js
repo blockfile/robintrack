@@ -30,7 +30,7 @@ test('config exposes pons.family + reward-engine defaults', () => {
   assert.strictEqual(config.triggerMode, 'interval');
   assert.strictEqual(config.claimEveryEth, 0.005);
   assert.strictEqual(config.pollSchedule, '*/5 * * * *');
-  assert.strictEqual(config.protocolFeeSharePct, 10);
+  assert.strictEqual(config.protocolFeeSharePct, 30); // pons: 70% creator / 30% protocol
   assert.strictEqual(config.deadAddress, '0x000000000000000000000000000000000000dead');
   assert.strictEqual(config.mongoDb, 'ponsliqui');
   assert.deepStrictEqual(config.clusters, []);

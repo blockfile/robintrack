@@ -60,10 +60,36 @@ async function airdropToken({ rewardToken, allocations, cycleId }) {
   return pipelineAirdrop({ rewardToken, allocations, record });
 }
 
-// One disperseToken tx per batch (nonce-safe via sendTx). A whole batch shares a
-// tx, so a batch either lands for everyone in it or is recorded failed together.
+// The Disperse contract moves the tokens with transferFrom, so it must be
+// approved to spend this stock. Approve max once per token — after that the
+// allowance is huge and this is a no-op. Best-effort: on failure the caller's
+// try/catch records the batch failed rather than crashing the cycle.
+async function ensureDisperseApproval(token, needed) {
+  const t = erc20(token, wallet);
+  const allowance = await t.allowance(wallet.address, config.disperseAddress).catch(() => 0n);
+  if (allowance >= needed) return;
+  const tx = await t.approve(config.disperseAddress, (1n << 256n) - 1n);
+  await tx.wait();
+  console.log(`[airdrop] approved ${token} → disperse ${config.disperseAddress}: ${tx.hash}`);
+}
+
+// One disperseToken tx per batch (nonce-safe via sendTx) — the big win: hundreds
+// of recipients paid in a single transaction instead of one tx each. A whole
+// batch shares a tx, so a batch either lands for everyone in it or is recorded
+// failed together.
 async function disperseAirdrop({ rewardToken, allocations, record }) {
   const disperse = new Contract(config.disperseAddress, DISPERSE_ABI, wallet);
+
+  // Approve the disperse contract for the full amount about to be dispersed.
+  const total = allocations.reduce((s, a) => s + BigInt(a.amountRaw), 0n);
+  try {
+    await ensureDisperseApproval(rewardToken, total);
+  } catch (err) {
+    console.error(`[airdrop] disperse approval failed for ${rewardToken}: ${err.message}`);
+    for (const a of allocations) await record(a, null, 'failed');
+    return { sent: 0, failed: allocations.length };
+  }
+
   let sent = 0;
   let failed = 0;
   for (const batch of chunk(allocations, config.airdropBatchSize)) {

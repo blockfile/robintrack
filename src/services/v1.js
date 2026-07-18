@@ -30,11 +30,12 @@ async function buildStocks() {
 
 /** GET /v1/stats — protocol overview. */
 async function buildStats() {
-  const [stats, market, airdropTotals, stockPrices] = await Promise.all([
+  const [stats, market, airdropTotals, stockPrices, eligibleNow] = await Promise.all([
     repo.getStats(),
     getMarketData().catch(() => ({ marketCap: null, priceUsd: null })),
     repo.getAirdropTotals().catch(() => ({})),
     getStockPricesUsd().catch(() => ({})),
+    repo.getLatestEligibleHolders().catch(() => null),
   ]);
 
   // Total USD ever distributed = Σ (units airdropped per stock × its live price).
@@ -46,7 +47,12 @@ async function buildStats() {
   }
 
   const { nextAirdropAt, intervalSec } = nextRun(config.pollSchedule, Date.now());
-  const holders = sumAirdrops(airdropTotals).rewardHolders;
+  // CURRENT eligible wallets = the last cycle's fresh snapshot (>= MIN_HOLD, minus
+  // exclusions). This drops as wallets become ineligible — unlike the all-time
+  // count of everyone ever paid, which only grows. Fall back to that all-time
+  // count only before the first cycle has snapshotted.
+  const walletsPaidAllTime = sumAirdrops(airdropTotals).rewardHolders;
+  const eligible = eligibleNow != null ? eligibleNow : walletsPaidAllTime;
 
   return {
     ticker: config.tokenSymbol,
@@ -57,8 +63,9 @@ async function buildStats() {
     feesCollectedEth: +(stats.total_eth_claimed || 0).toFixed(6),
     rifBurned: stats.total_tokens_burned || 0, // token-side fee RIF burned to date
     burns: stats.burns || 0,
-    wallets: holders,
-    holders,
+    wallets: eligible, // CURRENT eligible wallets (last cycle's snapshot)
+    holders: eligible,
+    walletsPaidAllTime, // distinct wallets ever airdropped (cumulative)
     distributionIntervalSeconds: intervalSec,
     nextDistributionAt: nextAirdropAt,
     feePercent: 1,

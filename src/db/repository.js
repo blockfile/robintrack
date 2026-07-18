@@ -119,6 +119,22 @@ async function getAllSteps(limit, offset) {
     .toArray();
 }
 
+/**
+ * The eligible-holder count from the most recent cycle that recorded one — i.e.
+ * the CURRENT number of wallets ≥ MIN_HOLD (each cycle re-snapshots, so this
+ * drops as wallets become ineligible). Null if no cycle has snapshotted yet.
+ */
+async function getLatestEligibleHolders() {
+  const db = getDb();
+  const row = await db
+    .collection('cycles')
+    .find({ eligible_holders: { $ne: null } }, { projection: { eligible_holders: 1, _id: 0 } })
+    .sort({ id: -1 })
+    .limit(1)
+    .next();
+  return row ? row.eligible_holders : null;
+}
+
 async function getStats() {
   const db = getDb();
   const [row] = await db
@@ -232,6 +248,7 @@ module.exports = {
   getCycleWithSteps,
   getCycles,
   getLastCycle,
+  getLatestEligibleHolders,
   getAllSteps,
   getStats,
   addAirdrop,

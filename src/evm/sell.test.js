@@ -16,8 +16,8 @@ test('sweepValue leaves the gas reserve; returns 0 when balance <= reserve', () 
   assert.strictEqual(sweepValue(parseEther('0.002'), 0.002), 0n);
 });
 
-test('sellParams sells the token FOR weth at the pool fee tier', () => {
-  const p = sellParams({ poolFee: 10000n, pairedToken: '0xWeth' }, '0xRif', 100n, 95n, '0xSeller', 1234n);
+test('sellParams sells the token FOR weth at the pool fee tier (SwapRouter02: no deadline)', () => {
+  const p = sellParams({ poolFee: 10000n, pairedToken: '0xWeth' }, '0xRif', 100n, 95n, '0xSeller');
   assert.strictEqual(p.tokenIn, '0xRif');
   assert.strictEqual(p.tokenOut, '0xWeth');
   assert.strictEqual(p.fee, 10000n);
@@ -25,6 +25,7 @@ test('sellParams sells the token FOR weth at the pool fee tier', () => {
   assert.strictEqual(p.amountIn, 100n);
   assert.strictEqual(p.amountOutMinimum, 95n);
   assert.strictEqual(p.sqrtPriceLimitX96, 0n);
+  assert.ok(!('deadline' in p), 'SwapRouter02 exactInputSingle has no deadline field');
 });
 
 test('sellTokenForEth (DRY_RUN) returns a simulated receipt without touching the chain', async () => {

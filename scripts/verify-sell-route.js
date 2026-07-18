@@ -27,17 +27,16 @@ const { sellParams, V3_ROUTER_ABI } = require('../src/evm/sell');
   const router = new Contract(config.swapRouter, V3_ROUTER_ABI, provider);
   const seller = config.sellerAddress || config.wallet.address;
   const amountIn = parseUnits('1', 18); // 1 RIF, static only
-  const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
   try {
     const out = await router.exactInputSingle.staticCall(
-      sellParams(launch, config.tokenAddress, amountIn, 0n, seller, deadline),
+      sellParams(launch, config.tokenAddress, amountIn, 0n, seller),
       { from: seller }
     );
     console.log(`OK: exactInputSingle static-call succeeded — 1 RIF → ${formatEther(out)} WETH`);
-    console.log('Router ABI matches (SwapRouter with deadline).');
+    console.log('Router ABI matches (SwapRouter02 — no deadline).');
   } catch (err) {
     console.error('FAIL: exactInputSingle static-call reverted:', err.shortMessage || err.message);
-    console.error('→ The router may be SwapRouter02 (no deadline in the struct), or 0xCaf6… is not the right router.');
-    console.error('  If SwapRouter02: drop `deadline` from V3_ROUTER_ABI and sellParams in src/evm/sell.js.');
+    console.error('→ Confirm 0xCaf6… is SwapRouter02 (exactInputSingle WITHOUT deadline) and that the');
+    console.error('  seller address holds RIF (the quote pulls via transferFrom during simulation).');
   }
 })();

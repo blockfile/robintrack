@@ -17,11 +17,14 @@ const { erc20, wethContract, getDecimals, readTokenBalance } = require('./erc20'
 const { getLaunchedToken } = require('./pons');
 const { sendTx } = require('./send');
 
-// Uniswap V3 SwapRouter (original, with deadline in the struct). If the on-chain
-// router is SwapRouter02 (no deadline), the probe in scripts/verify-sell-route.js
-// will flag it and this ABI + the params object drop the `deadline` field.
+// Uniswap V3 SwapRouter02 — the router deployed on Robinhood Chain
+// (0xCaf6…, verified). SwapRouter02's exactInputSingle struct has NO `deadline`
+// (that's the classic SwapRouter). Using the with-deadline signature makes the
+// calldata hit a nonexistent function and revert bare — the failure diagnosed on
+// 2026-07-18. Deadline is dropped entirely (the swap is sent immediately; the
+// slippage floor is the protection).
 const V3_ROUTER_ABI = [
-  'function exactInputSingle((address tokenIn,address tokenOut,uint24 fee,address recipient,uint256 deadline,uint256 amountIn,uint256 amountOutMinimum,uint160 sqrtPriceLimitX96) params) payable returns (uint256 amountOut)',
+  'function exactInputSingle((address tokenIn,address tokenOut,uint24 fee,address recipient,uint256 amountIn,uint256 amountOutMinimum,uint160 sqrtPriceLimitX96) params) payable returns (uint256 amountOut)',
 ];
 
 /** Slippage floor: quotedRaw * (100 - slippagePct)%, in basis points. */
@@ -36,14 +39,13 @@ function sweepValue(balanceWei, reserveEth) {
   return v > 0n ? v : 0n;
 }
 
-/** exactInputSingle params for selling `token` → WETH on the launch pool. */
-function sellParams(launch, token, amountIn, minOut, recipient, deadline) {
+/** SwapRouter02 exactInputSingle params for selling `token` → WETH on the pool. */
+function sellParams(launch, token, amountIn, minOut, recipient) {
   return {
     tokenIn: token,
     tokenOut: launch.pairedToken,
     fee: launch.poolFee,
     recipient,
-    deadline,
     amountIn: BigInt(amountIn),
     amountOutMinimum: BigInt(minOut),
     sqrtPriceLimitX96: 0n,
@@ -106,10 +108,9 @@ async function sellTokenForEth(token, amountRaw) {
     console.log(`[tx] approve ${config.tokenSymbol} → V3 router: ${approveTx.hash}`);
   }
 
-  const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
   // Quote by static-calling the swap with min=0; refuse if it can't fill.
   const quoted = await router.exactInputSingle.staticCall(
-    sellParams(launch, token, sellAmount, 0n, seller, deadline)
+    sellParams(launch, token, sellAmount, 0n, seller)
   );
   if (quoted === 0n) throw new Error(`sell quote returned 0 (no liquidity for ${token}?)`);
   const minOut = computeMinOut(quoted, config.sellSlippagePct);
@@ -118,7 +119,7 @@ async function sellTokenForEth(token, amountRaw) {
   const weth = wethContract(sellerSigner);
   const wethBefore = await weth.balanceOf(seller);
   const swapTx = await sendTx(() =>
-    router.exactInputSingle(sellParams(launch, token, sellAmount, minOut, seller, deadline))
+    router.exactInputSingle(sellParams(launch, token, sellAmount, minOut, seller))
   );
   await swapTx.wait();
   const wethAfter = await weth.balanceOf(seller);

@@ -156,6 +156,8 @@ async function getStats() {
           total_eth_spent_buy: { $sum: { $ifNull: ['$eth_spent_buy', 0] } },
           total_tokens_bought: { $sum: { $ifNull: ['$tokens_bought', 0] } },
           total_tokens_burned: { $sum: { $ifNull: ['$tokens_burned', 0] } },
+          total_tokens_sold: { $sum: { $ifNull: ['$tokens_sold', 0] } },
+          total_eth_to_dev: { $sum: { $ifNull: ['$eth_to_dev', 0] } },
         },
       },
     ])
@@ -174,6 +176,8 @@ async function getStats() {
 
   // Number of successful burns performed.
   const burns = await db.collection('steps').countDocuments({ name: 'burn', status: 'ok' });
+  // Number of successful dev-fee sells performed.
+  const devFees = await db.collection('steps').countDocuments({ name: 'dev-fee', status: 'ok' });
 
   return {
     ...(row || {
@@ -184,9 +188,12 @@ async function getStats() {
       total_eth_spent_buy: 0,
       total_tokens_bought: 0,
       total_tokens_burned: 0,
+      total_tokens_sold: 0,
+      total_eth_to_dev: 0,
     }),
     total_eth_claimed: claimRow ? claimRow.eth : 0,
     burns,
+    devFees,
   };
 }
 

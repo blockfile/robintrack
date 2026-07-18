@@ -6,14 +6,23 @@ for your holders — on Robinhood Chain.**
 Every claim, the bot recycles your PONZI creator fees into stock airdrops:
 
 ```
-claim PONZI creator fees (WETH)  — collectFees() on the pons.family locker
+claim PONZI creator fees (WETH + RIF)  — collectFees() on the pons.family locker
+
+  ── token-side RIF (the fee paid in the token itself) ──
+  →  5%  burned (sent to the dead address)
+  → 95%  sold to ETH by the DISCLOSED fee-conversion wallet → sent to the dev
+
+  ── WETH ──
   → unwrap to native ETH
   → 80%  buy the 10 assets (Uniswap V4: NVDA, AAPL, TSLA, …)
          → airdrop ALL 10 to each PONZI holder (pro-rata, >= MIN_HOLD)
   → 20%  kept as native ETH (dev cut + gas)
 ```
 
-Every eligible holder receives **all 10 assets** every cycle. Nothing is burned.
+Every eligible holder receives **all 10 assets** every cycle. The token-side fee
+is split (`BURN_PCT`): the default **5% is burned, 95% is sold to ETH for the
+dev** — see [Token-side fee](#token-side-fee-burn--disclosed-dev-fee) below. The
+sold portion is a **disclosed dev fee**, never counted as a burn.
 
 Everything runs in `DRY_RUN=true` by default — all on-chain calls are simulated
 and no funds are touched until you flip it off.
@@ -54,6 +63,32 @@ protocol share, and pays the creator remainder to the token's fee recipient — 
 **deployer**. So the operating wallet **must be the wallet that deployed PONZI on
 pons.family**; the WETH lands there and the cycle unwraps it to native ETH for
 the V4 buys.
+
+## Token-side fee: burn + disclosed dev fee
+
+pons.family pays the creator fee partly in **WETH** and partly in the **token
+itself** (RIF). Each cycle, that token-side RIF is split (`BURN_PCT`, default 5):
+
+- **`BURN_PCT`% is burned** — sent to the dead address, permanently out of supply.
+- **The remainder is sold to ETH** on the RIF/WETH Uniswap **V3** launch pool by
+  the project's **disclosed fee-conversion wallet** (`SELLER_PRIVATE_KEY`), which
+  then forwards the ETH to the dev wallet (`DEV_WALLET`), keeping a small gas
+  reserve.
+
+This is a **disclosed dev fee, not a burn.** Selling the token is not the same as
+burning it, and this is reported that way everywhere:
+
+- `/v1/stats` returns `rifBurned`, `rifSold`, and `ethToDev` **separately** — the
+  sold portion is never merged into the burn figure.
+- The fee-conversion wallet address is **published here**:
+  `<PUBLISH THE SELLER ADDRESS HERE>`.
+
+The WETH leg (the stock buys + airdrops) is funded **only** by the claimed WETH —
+the ETH from selling RIF goes to the dev, not into the reward budget.
+
+Before enabling this live, run `node scripts/verify-sell-route.js` (see
+[scripts/](scripts/)) against the real chain to confirm the router/pool, and
+pre-fund the seller wallet with a little native ETH for gas.
 
 ## The reward leg, precisely
 

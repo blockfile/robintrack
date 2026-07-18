@@ -29,7 +29,10 @@ async function createCycle({ dryRun }) {
     eth_spent_buy: null,
     tokens_bought: null,
     tokens_burned: null,
+    tokens_sold: null,
+    eth_to_dev: null,
     burn_sig: null,
+    dev_fee_sig: null,
     dry_run: dryRun ? 1 : 0,
     note: null,
     error: null,
@@ -47,7 +50,10 @@ async function finishCycle(id, fields) {
     'eth_spent_buy',
     'tokens_bought',
     'tokens_burned',
+    'tokens_sold',
+    'eth_to_dev',
     'burn_sig',
+    'dev_fee_sig',
     'eligible_holders',
     'total_holders',
     'note',
@@ -150,6 +156,8 @@ async function getStats() {
           total_eth_spent_buy: { $sum: { $ifNull: ['$eth_spent_buy', 0] } },
           total_tokens_bought: { $sum: { $ifNull: ['$tokens_bought', 0] } },
           total_tokens_burned: { $sum: { $ifNull: ['$tokens_burned', 0] } },
+          total_tokens_sold: { $sum: { $ifNull: ['$tokens_sold', 0] } },
+          total_eth_to_dev: { $sum: { $ifNull: ['$eth_to_dev', 0] } },
         },
       },
     ])
@@ -168,6 +176,8 @@ async function getStats() {
 
   // Number of successful burns performed.
   const burns = await db.collection('steps').countDocuments({ name: 'burn', status: 'ok' });
+  // Number of successful dev-fee sells performed.
+  const devFees = await db.collection('steps').countDocuments({ name: 'dev-fee', status: 'ok' });
 
   return {
     ...(row || {
@@ -178,9 +188,12 @@ async function getStats() {
       total_eth_spent_buy: 0,
       total_tokens_bought: 0,
       total_tokens_burned: 0,
+      total_tokens_sold: 0,
+      total_eth_to_dev: 0,
     }),
     total_eth_claimed: claimRow ? claimRow.eth : 0,
     burns,
+    devFees,
   };
 }
 

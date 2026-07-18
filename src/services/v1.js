@@ -62,6 +62,9 @@ async function buildStats() {
     totalValueDistributedUsd: +totalUsd.toFixed(2),
     feesCollectedEth: +(stats.total_eth_claimed || 0).toFixed(6),
     rifBurned: stats.total_tokens_burned || 0, // token-side fee RIF burned to date
+    rifSold: stats.total_tokens_sold || 0, // token-side fee RIF sold to ETH for the dev (NOT burned)
+    ethToDev: +(stats.total_eth_to_dev || 0).toFixed(6), // ETH sent to the dev from selling the fee
+    devFees: stats.devFees || 0, // count of dev-fee sells performed
     burns: stats.burns || 0,
     wallets: eligible, // CURRENT eligible wallets (last cycle's snapshot)
     holders: eligible,

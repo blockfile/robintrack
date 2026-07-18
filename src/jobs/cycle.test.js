@@ -11,6 +11,7 @@ let db;
 let repo;
 let simvault;
 let runCycle;
+let config;
 
 before(async () => {
   process.env.DRY_RUN = 'true';
@@ -19,6 +20,7 @@ before(async () => {
   process.env.MONGODB_URI = mongod.getUri();
   process.env.MONGODB_DB = 'ponsliqui_test_cycle';
   delete require.cache[require.resolve('../config')];
+  config = require('../config');
   db = require('../db/index');
   repo = require('../db/repository');
   simvault = require('../evm/simvault');
@@ -45,6 +47,15 @@ test('runCycle (DRY_RUN): claim → burn RIF → buy each stock on V4 + airdrop 
   assert.strictEqual(names[0], 'claim');
   assert.strictEqual(names[1], 'burn', 'RIF is burned right after the claim, before buys');
   assert.ok(cycle.tokens_burned > 0, 'RIF was burned');
+
+  // The token-side fee is SPLIT: burn 5%, sell 95% as a disclosed dev fee.
+  assert.strictEqual(names[2], 'dev-fee', 'dev-fee sell recorded right after the burn');
+  const devFee = cycle.steps.find((s) => s.name === 'dev-fee');
+  assert.strictEqual(devFee.status, 'ok');
+  assert.ok(cycle.tokens_sold > 0, 'RIF was sold, not burned');
+  assert.ok(cycle.tokens_sold > cycle.tokens_burned, '95% sold vs 5% burned');
+  assert.ok(cycle.eth_to_dev > 0, 'sale proceeds recorded for the dev');
+  assert.strictEqual(devFee.detail.devWallet, config.wallet.address.toLowerCase());
   const buys = cycle.steps.filter((s) => s.name === 'buy' && s.detail?.leg === 'reward');
   const drops = cycle.steps.filter((s) => s.name === 'airdrop');
   assert.strictEqual(buys.length, REGISTRY.length, 'one buy per stock');
@@ -87,4 +98,21 @@ test('runCycle (DRY_RUN): nothing claimable → skipped', async () => {
   assert.strictEqual(cycle.status, 'skipped');
   assert.ok(cycle.steps.some((s) => s.name === 'claim'));
   assert.ok(!cycle.steps.some((s) => s.name === 'buy'));
+});
+
+test('BURN_PCT=100 reproduces burn-only behavior (no dev-fee sell)', async () => {
+  process.env.BURN_PCT = '100';
+  delete require.cache[require.resolve('../config')];
+  delete require.cache[require.resolve('../evm/sell')];
+  delete require.cache[require.resolve('./cycle')];
+  const { runCycle: runCycle100 } = require('./cycle');
+  simvault.reset(0.05);
+  const cycle = await runCycle100();
+  assert.ok(cycle.steps.some((s) => s.name === 'burn'));
+  assert.ok(!cycle.steps.some((s) => s.name === 'dev-fee'), 'nothing sold when BURN_PCT=100');
+  assert.ok(!(cycle.tokens_sold > 0));
+  delete process.env.BURN_PCT;
+  delete require.cache[require.resolve('../config')];
+  delete require.cache[require.resolve('../evm/sell')];
+  delete require.cache[require.resolve('./cycle')];
 });

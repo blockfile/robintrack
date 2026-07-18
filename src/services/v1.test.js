@@ -1,7 +1,17 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const { cycleToDistribution, SYMBOL_BY_ADDR } = require('./v1');
+
+// Stub the network-backed deps BEFORE requiring v1 so buildStats stays offline
+// and deterministic. v1 destructures these at import, so they must be replaced
+// on the module exports first.
+const marketdata = require('./marketdata');
+marketdata.getMarketData = async () => ({ marketCap: null, priceUsd: null });
+const stockprice = require('../evm/stockprice');
+stockprice.getStockPricesUsd = async () => ({});
+const repo = require('../db/repository');
+
+const { buildStats, cycleToDistribution, SYMBOL_BY_ADDR } = require('./v1');
 const { REGISTRY } = require('../evm/stocks');
 
 const CYCLE = {
@@ -46,4 +56,21 @@ test('SYMBOL_BY_ADDR maps every registry token address back to its ticker', () =
   for (const s of REGISTRY) {
     assert.strictEqual(SYMBOL_BY_ADDR[s.token.toLowerCase()], s.symbol);
   }
+});
+
+test('/v1 stats exposes rifSold, ethToDev, devFees (honest, separate from burns)', async () => {
+  repo.getStats = async () => ({
+    cycles: 1, completed: 1, failed: 0, skipped: 0,
+    total_eth_spent_buy: 0, total_tokens_bought: 0,
+    total_tokens_burned: 50, total_tokens_sold: 950, total_eth_to_dev: 0.5,
+    total_eth_claimed: 0, burns: 1, devFees: 1,
+  });
+  repo.getAirdropTotals = async () => ({});
+  repo.getLatestEligibleHolders = async () => 0;
+
+  const stats = await buildStats();
+  assert.strictEqual(stats.rifBurned, 50);
+  assert.strictEqual(stats.rifSold, 950);
+  assert.ok(Math.abs(stats.ethToDev - 0.5) < 1e-9);
+  assert.strictEqual(stats.devFees, 1);
 });

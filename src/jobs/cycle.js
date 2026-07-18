@@ -5,6 +5,7 @@ const repo = require('../db/repository');
 const { parseEther, formatUnits } = require('ethers');
 const { claimCreatorFees } = require('../evm/pons');
 const { burnToken } = require('../evm/burn');
+const { sellTokenForEth } = require('../evm/sell');
 const { getWethBalanceEth, unwrapAllWeth, getTokenSupplyRaw, readTokenBalance } = require('../evm/erc20');
 const { snapshotEligibleHolders } = require('../evm/holders');
 const { buildExcludeSet } = require('../evm/exclude');
@@ -111,26 +112,48 @@ async function runCycle() {
     await repo.addStep({ cycleId: id, name: 'claim', status: 'ok', signature: claim.signature, detail: { ethClaimed: claim.ethClaimed } });
     log(`claimed ${claim.ethClaimed} ETH`);
 
-    // 2. Burn the wallet's ENTIRE RIF balance FIRST — every cycle, whatever RIF
-    //    the wallet holds (this claim's token-side fee plus any residue) is sent
-    //    to the dead address. Best-effort: a failed burn must never strand the
-    //    stock airdrops. NOTE: this burns ALL RIF in the operating wallet, so do
-    //    not park RIF you want to keep here.
+    // 2. Split the wallet's token-side fee. Burn BURN_PCT to the dead address;
+    //    sell the remainder to ETH from the DISCLOSED seller wallet and send the
+    //    ETH to the dev. Both legs are best-effort — a failure here must never
+    //    strand the stock airdrops. The sell is NEVER labeled a burn. NOTE: this
+    //    consumes ALL RIF in the operating wallet, so do not park RIF here.
     let burned = 0;
     let burnSig = null;
-    const toBurnRaw = config.dryRun
-      ? (10n ** 21n).toString() // simulate ~1000 RIF so a dry cycle exercises the leg
-      : (await readTokenBalance(config.tokenAddress, config.wallet.address).catch(() => 0n)).toString();
-    if (BigInt(toBurnRaw) > 0n) {
-      try {
-        const burn = await burnToken(config.tokenAddress, toBurnRaw);
-        await repo.addStep({ cycleId: id, name: 'burn', status: 'ok', signature: burn.signature, detail: { token: config.tokenAddress, tokensBurned: burn.burned, burnedRaw: burn.burnedRaw, deadAddress: burn.deadAddress } });
-        burned = burn.burned;
-        burnSig = burn.signature;
-        log(`burned ${burn.burned} ${config.tokenSymbol} (fee-side) → ${burn.deadAddress}`);
-      } catch (err) {
-        await repo.addStep({ cycleId: id, name: 'burn', status: 'failed', detail: { message: err.message } });
-        log(`burn ${config.tokenSymbol} failed (non-fatal): ${err.message}`);
+    let sold = 0;
+    let ethToDev = 0;
+    let devFeeSig = null;
+    const feeBalRaw = config.dryRun
+      ? 10n ** 21n // simulate ~1000 RIF so a dry cycle exercises both legs
+      : await readTokenBalance(config.tokenAddress, config.wallet.address).catch(() => 0n);
+    if (feeBalRaw > 0n) {
+      const burnRaw = (feeBalRaw * BigInt(Math.round(config.burnPct * 100))) / 10000n;
+      const sellRaw = feeBalRaw - burnRaw;
+
+      if (burnRaw > 0n) {
+        try {
+          const burn = await burnToken(config.tokenAddress, burnRaw.toString());
+          await repo.addStep({ cycleId: id, name: 'burn', status: 'ok', signature: burn.signature, detail: { token: config.tokenAddress, tokensBurned: burn.burned, burnedRaw: burn.burnedRaw, deadAddress: burn.deadAddress, pct: config.burnPct } });
+          burned = burn.burned;
+          burnSig = burn.signature;
+          log(`burned ${burn.burned} ${config.tokenSymbol} (${config.burnPct}%) → ${burn.deadAddress}`);
+        } catch (err) {
+          await repo.addStep({ cycleId: id, name: 'burn', status: 'failed', detail: { message: err.message } });
+          log(`burn ${config.tokenSymbol} failed (non-fatal): ${err.message}`);
+        }
+      }
+
+      if (sellRaw > 0n) {
+        try {
+          const sale = await sellTokenForEth(config.tokenAddress, sellRaw.toString());
+          await repo.addStep({ cycleId: id, name: 'dev-fee', status: 'ok', signature: sale.signature, detail: { token: config.tokenAddress, tokensSold: sale.sold, ethReceived: sale.ethReceived, ethToDev: sale.ethToDev, pct: +(100 - config.burnPct).toFixed(6), seller: config.sellerAddress, devWallet: config.devWallet } });
+          sold = sale.sold;
+          ethToDev = sale.ethToDev;
+          devFeeSig = sale.signature;
+          log(`sold ${sale.sold} ${config.tokenSymbol} (${100 - config.burnPct}%) → ${sale.ethToDev} ETH → dev ${config.devWallet}`);
+        } catch (err) {
+          await repo.addStep({ cycleId: id, name: 'dev-fee', status: 'failed', detail: { message: err.message } });
+          log(`dev-fee sell ${config.tokenSymbol} failed (non-fatal): ${err.message}`);
+        }
       }
     }
 
@@ -139,8 +162,8 @@ async function runCycle() {
     const claimed = claim.ethClaimed;
     const walletWeth = config.dryRun ? claimed : await getWethBalanceEth().catch(() => claimed);
     if (!(walletWeth > 0)) {
-      await repo.finishCycle(id, { status: 'skipped', eth_claimed: claimed, tokens_burned: burned, burn_sig: burnSig, note: 'nothing claimed (WETH)' });
-      log('skipped: no WETH to buy stocks (RIF still burned)');
+      await repo.finishCycle(id, { status: 'skipped', eth_claimed: claimed, tokens_burned: burned, tokens_sold: sold, eth_to_dev: ethToDev, burn_sig: burnSig, dev_fee_sig: devFeeSig, note: 'nothing claimed (WETH)' });
+      log('skipped: no WETH to buy stocks (RIF fee still burned + sold)');
       return repo.getCycleWithSteps(id);
     }
 
@@ -177,11 +200,14 @@ async function runCycle() {
       eth_claimed: claimed,
       eth_spent_buy: rewardEth,
       tokens_burned: burned,
+      tokens_sold: sold,
+      eth_to_dev: ethToDev,
       burn_sig: burnSig,
+      dev_fee_sig: devFeeSig,
       eligible_holders: reward.eligibleHolders,
       total_holders: reward.totalHolders,
       stocks: reward.stocks,
-      note: `burned ${burned} ${config.tokenSymbol}; airdropped ${reward.stocks.filter((s) => !s.error).length} stocks, ${reward.sent} sends (${reward.failed} failed)`,
+      note: `burned ${burned} + sold ${sold} ${config.tokenSymbol} (→ ${ethToDev} ETH dev); airdropped ${reward.stocks.filter((s) => !s.error).length} stocks, ${reward.sent} sends (${reward.failed} failed)`,
     });
     log('complete (stocks-reward)');
     return repo.getCycleWithSteps(id);

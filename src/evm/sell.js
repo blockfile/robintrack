@@ -12,8 +12,8 @@
 
 const { Contract, MaxUint256, parseEther, formatEther, formatUnits } = require('ethers');
 const config = require('../config');
-const { provider } = require('./provider');
-const { erc20, wethContract, getDecimals } = require('./erc20');
+const { provider, wallet } = require('./provider');
+const { erc20, wethContract, getDecimals, readTokenBalance } = require('./erc20');
 const { getLaunchedToken } = require('./pons');
 const { sendTx } = require('./send');
 
@@ -85,10 +85,22 @@ async function sellTokenForEth(token, amountRaw) {
   const router = new Contract(config.swapRouter, V3_ROUTER_ABI, sellerSigner);
   const seller = sellerSigner.address;
 
+  // Move the sell-side RIF from the operating wallet to the DISCLOSED seller
+  // wallet FIRST, so the swap is signed by (and visible on-chain as) the seller
+  // wallet — the point of the separate wallet.
+  const xferTx = await sendTx(() => erc20(token, wallet).transfer(seller, amount));
+  await xferTx.wait();
+  console.log(`[tx] move ${formatEther(amount)} ${config.tokenSymbol} → seller ${seller}: ${xferTx.hash}`);
+
+  // Sell the seller wallet's FULL RIF balance (this transfer plus any residue
+  // stranded by an earlier cycle whose sell failed) — self-healing.
+  const sellAmount = await readTokenBalance(token, seller);
+  if (sellAmount <= 0n) throw new Error('seller wallet holds no RIF after transfer');
+
   // Approve the router once (idempotent — skip if the allowance already covers).
   const rif = erc20(token, sellerSigner);
   const allowance = await rif.allowance(seller, config.swapRouter);
-  if (allowance < amount) {
+  if (allowance < sellAmount) {
     const approveTx = await sendTx(() => rif.approve(config.swapRouter, MaxUint256));
     await approveTx.wait();
     console.log(`[tx] approve ${config.tokenSymbol} → V3 router: ${approveTx.hash}`);
@@ -97,7 +109,7 @@ async function sellTokenForEth(token, amountRaw) {
   const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
   // Quote by static-calling the swap with min=0; refuse if it can't fill.
   const quoted = await router.exactInputSingle.staticCall(
-    sellParams(launch, token, amount, 0n, seller, deadline)
+    sellParams(launch, token, sellAmount, 0n, seller, deadline)
   );
   if (quoted === 0n) throw new Error(`sell quote returned 0 (no liquidity for ${token}?)`);
   const minOut = computeMinOut(quoted, config.sellSlippagePct);
@@ -106,13 +118,13 @@ async function sellTokenForEth(token, amountRaw) {
   const weth = wethContract(sellerSigner);
   const wethBefore = await weth.balanceOf(seller);
   const swapTx = await sendTx(() =>
-    router.exactInputSingle(sellParams(launch, token, amount, minOut, seller, deadline))
+    router.exactInputSingle(sellParams(launch, token, sellAmount, minOut, seller, deadline))
   );
   await swapTx.wait();
   const wethAfter = await weth.balanceOf(seller);
   const wethOut = wethAfter - wethBefore;
   if (wethOut <= 0n) throw new Error(`sell landed 0 WETH (tx ${swapTx.hash})`);
-  console.log(`[tx] sell ${formatUnits(amount, await getDecimals(token))} ${config.tokenSymbol} → ${formatEther(wethOut)} WETH: ${swapTx.hash}`);
+  console.log(`[tx] sell ${formatUnits(sellAmount, await getDecimals(token))} ${config.tokenSymbol} → ${formatEther(wethOut)} WETH: ${swapTx.hash}`);
 
   // Unwrap WETH → native ETH in the seller wallet.
   const unwrapTx = await sendTx(() => weth.withdraw(wethOut));
@@ -131,8 +143,8 @@ async function sellTokenForEth(token, amountRaw) {
 
   return {
     signature: swapTx.hash,
-    soldRaw: amount,
-    sold: Number(formatEther(amount)), // RIF is 18-decimal
+    soldRaw: sellAmount,
+    sold: Number(formatEther(sellAmount)), // RIF is 18-decimal
     ethReceived: Number(formatEther(wethOut)),
     ethToDev,
     simulated: false,

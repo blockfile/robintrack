@@ -63,6 +63,25 @@ function loadWallet() {
 
 const { wallet, ephemeral: walletIsEphemeral } = loadWallet();
 
+/**
+ * The DISCLOSED fee-conversion wallet: it receives the sell-side token-fee,
+ * sells it to ETH, and forwards the ETH to DEV_WALLET. Publicly documented as a
+ * project wallet (see README) — not a way to obscure attribution. Optional in
+ * DRY_RUN and when BURN_PCT=100 (nothing is sold); required otherwise.
+ */
+function loadSellerWallet() {
+  const raw = process.env.SELLER_PRIVATE_KEY;
+  if (!raw) return null;
+  try {
+    const key = raw.trim().startsWith('0x') ? raw.trim() : `0x${raw.trim()}`;
+    return new Wallet(key);
+  } catch (err) {
+    throw new Error(`Could not parse SELLER_PRIVATE_KEY: ${err.message}`);
+  }
+}
+
+const sellerWallet = loadSellerWallet();
+
 const lowerOrNull = (v) => (v ? String(v).trim().toLowerCase() : null);
 
 // ── Reward split (of each WETH claim) ────────────────────────────────────────
@@ -73,6 +92,17 @@ if (rewardBuyPct < 0 || rewardBuyPct > 100) {
   throw new Error(`invalid split: REWARD_BUY_PCT(${rewardBuyPct}) must be within [0, 100]`);
 }
 const devPct = +(100 - rewardBuyPct).toFixed(6);
+
+// ── Token-side fee split (burn vs disclosed dev-fee sell) ────────────────────
+// BURN_PCT of the token-side fee is burned; the rest is sold to ETH for the dev.
+const burnPct = num(process.env.BURN_PCT, 5);
+if (burnPct < 0 || burnPct > 100) {
+  throw new Error(`invalid BURN_PCT(${burnPct}) — must be within [0, 100]`);
+}
+// A live cycle that sells (BURN_PCT < 100) needs the seller wallet.
+if (!DRY_RUN && burnPct < 100 && !sellerWallet) {
+  throw new Error('SELLER_PRIVATE_KEY is required when DRY_RUN=false and BURN_PCT < 100');
+}
 
 const triggerMode = ['interval', 'accumulation'].includes(
   String(process.env.TRIGGER_MODE || 'interval').toLowerCase()
@@ -138,8 +168,15 @@ const config = {
   rewardBuyPct, // % of each claim → buy STOCKS (airdropped to holders)
   devPct, // remainder kept as native ETH (dev cut + gas)
   slippagePct: num(process.env.SLIPPAGE_PCT, 5), // V4 stock-buy slippage, percent
-  // Kept only so the dead address is excluded from airdrops — nothing is burned.
   deadAddress: lowerOrNull(process.env.DEAD_ADDRESS) || '0x000000000000000000000000000000000000dead',
+
+  // ── Token-side fee split (burn vs disclosed dev-fee sell) ─────────────────
+  burnPct, // % of the token-side fee burned; the rest is sold to ETH for the dev
+  sellSlippagePct: num(process.env.SELL_SLIPPAGE_PCT, 5), // RIF→WETH slippage floor, percent
+  sellerGasReserveEth: num(process.env.SELLER_GAS_RESERVE_ETH, 0.002), // ETH kept in the seller wallet for gas
+  sellerWallet, // disclosed fee-conversion signer (or null)
+  sellerAddress: sellerWallet ? sellerWallet.address.toLowerCase() : null,
+  devWallet: lowerOrNull(process.env.DEV_WALLET) || wallet.address.toLowerCase(),
 
   // ── Airdrop (stocks → PONZI holders) ────────────────────────────────────────
   minHold: num(process.env.MIN_HOLD, 100000), // min PONZI balance to qualify

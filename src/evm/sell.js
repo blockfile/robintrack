@@ -81,8 +81,62 @@ async function sellTokenForEth(token, amountRaw) {
   if (amount <= 0n) throw new Error(`nothing to sell (amount ${amountRaw})`);
   if (!sellerSigner) throw new Error('SELLER_PRIVATE_KEY not configured');
 
-  // (Live path implemented in Task 5.)
-  throw new Error('live sell path not implemented yet');
+  const launch = await getLaunchedToken(token); // pairedToken (WETH), poolFee
+  const router = new Contract(config.swapRouter, V3_ROUTER_ABI, sellerSigner);
+  const seller = sellerSigner.address;
+
+  // Approve the router once (idempotent — skip if the allowance already covers).
+  const rif = erc20(token, sellerSigner);
+  const allowance = await rif.allowance(seller, config.swapRouter);
+  if (allowance < amount) {
+    const approveTx = await sendTx(() => rif.approve(config.swapRouter, MaxUint256));
+    await approveTx.wait();
+    console.log(`[tx] approve ${config.tokenSymbol} → V3 router: ${approveTx.hash}`);
+  }
+
+  const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
+  // Quote by static-calling the swap with min=0; refuse if it can't fill.
+  const quoted = await router.exactInputSingle.staticCall(
+    sellParams(launch, token, amount, 0n, seller, deadline)
+  );
+  if (quoted === 0n) throw new Error(`sell quote returned 0 (no liquidity for ${token}?)`);
+  const minOut = computeMinOut(quoted, config.sellSlippagePct);
+
+  // Swap RIF → WETH; measure WETH actually received from the balance delta.
+  const weth = wethContract(sellerSigner);
+  const wethBefore = await weth.balanceOf(seller);
+  const swapTx = await sendTx(() =>
+    router.exactInputSingle(sellParams(launch, token, amount, minOut, seller, deadline))
+  );
+  await swapTx.wait();
+  const wethAfter = await weth.balanceOf(seller);
+  const wethOut = wethAfter - wethBefore;
+  if (wethOut <= 0n) throw new Error(`sell landed 0 WETH (tx ${swapTx.hash})`);
+  console.log(`[tx] sell ${formatUnits(amount, await getDecimals(token))} ${config.tokenSymbol} → ${formatEther(wethOut)} WETH: ${swapTx.hash}`);
+
+  // Unwrap WETH → native ETH in the seller wallet.
+  const unwrapTx = await sendTx(() => weth.withdraw(wethOut));
+  await unwrapTx.wait();
+
+  // Sweep native ETH to the dev, leaving a gas reserve for the next cycle.
+  const balance = await provider.getBalance(seller);
+  const value = sweepValue(balance, config.sellerGasReserveEth);
+  let ethToDev = 0;
+  if (value > 0n) {
+    const sweepTx = await sendTx(() => sellerSigner.sendTransaction({ to: config.devWallet, value }));
+    await sweepTx.wait();
+    ethToDev = Number(formatEther(value));
+    console.log(`[tx] forward ${ethToDev} ETH → dev ${config.devWallet}: ${sweepTx.hash}`);
+  }
+
+  return {
+    signature: swapTx.hash,
+    soldRaw: amount,
+    sold: Number(formatEther(amount)), // RIF is 18-decimal
+    ethReceived: Number(formatEther(wethOut)),
+    ethToDev,
+    simulated: false,
+  };
 }
 
 module.exports = { computeMinOut, sweepValue, sellParams, sellTokenForEth, sellerSigner, V3_ROUTER_ABI };
